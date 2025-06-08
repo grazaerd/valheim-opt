@@ -11,7 +11,6 @@
 #include <d3dcommon.h>
 #include <dxgi.h>
 #include <libloaderapi.h>
-#include <LightningScanner.hpp>
 #include <minwindef.h>
 #include <mutex>
 #include <winerror.h>
@@ -110,36 +109,98 @@ DLLEXPORT HRESULT __stdcall D3D11CreateDevice(
         ID3D11Device**        ppDevice,
         D3D_FEATURE_LEVEL*    pFeatureLevel,
         ID3D11DeviceContext** ppImmediateContext) {
+  if (ppDevice)
+    *ppDevice = nullptr;
 
-  if (ppDevice) {
-      *ppDevice = nullptr;
-  }
+  if (ppImmediateContext)
+    *ppImmediateContext = nullptr;
 
-  const auto proc = atfix::loadSystemD3D11();
-  if (!proc.D3D11CreateDevice) {
-      return E_FAIL;
-  }
+  auto proc = atfix::loadSystemD3D11();
+
+  if (!proc.D3D11CreateDevice)
+    return E_FAIL;
 
   ID3D11Device* device = nullptr;
+  ID3D11DeviceContext* context = nullptr;
 
-  const HRESULT hrt = (*proc.D3D11CreateDevice)(pAdapter, DriverType, Software,
+  HRESULT hr = (*proc.D3D11CreateDevice)(pAdapter, DriverType, Software,
     Flags, pFeatureLevels, FeatureLevels, SDKVersion, &device, pFeatureLevel,
-      ppImmediateContext);
+    &context);
 
-  if (FAILED(hrt)) {
-      return hrt;
-  }
+  if (FAILED(hr))
+    return hr;
 
   atfix::hookDevice(device);
+  atfix::hookContext(context);
 
   if (ppDevice) {
     device->AddRef();
     *ppDevice = device;
   }
 
-  device->Release();
+  if (ppImmediateContext) {
+    context->AddRef();
+    *ppImmediateContext = context;
+  }
 
-  return hrt;
+  device->Release();
+  context->Release();
+  return hr;
+}
+
+DLLEXPORT HRESULT __stdcall D3D11CreateDeviceAndSwapChain(
+        IDXGIAdapter*         pAdapter,
+        D3D_DRIVER_TYPE       DriverType,
+        HMODULE               Software,
+        UINT                  Flags,
+  const D3D_FEATURE_LEVEL*    pFeatureLevels,
+        UINT                  FeatureLevels,
+        UINT                  SDKVersion,
+  const DXGI_SWAP_CHAIN_DESC* pSwapChainDesc,
+        IDXGISwapChain**      ppSwapChain,
+        ID3D11Device**        ppDevice,
+        D3D_FEATURE_LEVEL*    pFeatureLevel,
+        ID3D11DeviceContext** ppImmediateContext) {
+  if (ppDevice)
+    *ppDevice = nullptr;
+
+  if (ppImmediateContext)
+    *ppImmediateContext = nullptr;
+
+  if (ppSwapChain)
+    *ppSwapChain = nullptr;
+
+  auto proc = atfix::loadSystemD3D11();
+
+  if (!proc.D3D11CreateDeviceAndSwapChain)
+    return E_FAIL;
+
+  ID3D11Device* device = nullptr;
+  ID3D11DeviceContext* context = nullptr;
+
+  HRESULT hr = (*proc.D3D11CreateDeviceAndSwapChain)(pAdapter, DriverType, Software,
+    Flags, pFeatureLevels, FeatureLevels, SDKVersion, pSwapChainDesc, ppSwapChain,
+    &device, pFeatureLevel, &context);
+
+  if (FAILED(hr))
+    return hr;
+
+  atfix::hookDevice(device);
+  atfix::hookContext(context);
+
+  if (ppDevice) {
+    device->AddRef();
+    *ppDevice = device;
+  }
+
+  if (ppImmediateContext) {
+    context->AddRef();
+    *ppImmediateContext = context;
+  }
+
+  device->Release();
+  context->Release();
+  return hr;
 }
 
 BOOL WINAPI DllMain([[maybe_unused]] HINSTANCE hinstDLL, DWORD fdwReason,[[maybe_unused]] LPVOID lpvReserved) {

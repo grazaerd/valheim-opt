@@ -10,6 +10,8 @@
 namespace atfix {
 
 void hookDevice(ID3D11Device* pDevice);
+void hookContext(ID3D11DeviceContext* pContext);
+void CreateShaderOnStart(ID3D11Device* pDevice);
 /* lives in main.cpp */
 extern Log log;
 
