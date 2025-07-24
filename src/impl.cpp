@@ -109,6 +109,11 @@ HRESULT STDMETHODCALLTYPE ID3D11Device_CreateVertexShader(
     return procs->CreateVertexShader(pDevice, pShaderBytecode, BytecodeLength, pClassLinkage, ppVertexShader);
 }
 
+ID3D11PixelShader* DefPS = nullptr;
+ID3D11VertexShader* DefVS = nullptr;
+void CreateShaderOnStart(ID3D11Device* pDevice) {
+    HRESULT hr = pDevice->CreatePixelShader(data.data(), data.size(), nullptr, &DefPS);
+}
 HRESULT STDMETHODCALLTYPE ID3D11Device_CreatePixelShader(
     ID3D11Device* pDevice,
     const void* pShaderBytecode,
@@ -116,22 +121,14 @@ HRESULT STDMETHODCALLTYPE ID3D11Device_CreatePixelShader(
     ID3D11ClassLinkage* pClassLinkage,
     ID3D11PixelShader** ppPixelShader) {
     const auto* procs = getDeviceProcs(pDevice);
-    static constexpr std::array<uint32_t, 4> ParticleShader1 = { 0x476286fe, 0x2a8e1994, 0x002d66cf, 0x50b838e9 };
-    const auto* hash = std::bit_cast<const uint32_t*>(std::bit_cast<const uint8_t*>(pShaderBytecode) + 4);
-    HRESULT hr = procs->CreatePixelShader(pDevice, pShaderBytecode, BytecodeLength, pClassLinkage, ppPixelShader);
+	
+	if (!DefPS) {
+		procs->CreatePixelShader(pDevice, data.data(), data.size(), pClassLinkage, &DefPS);
+		*ppPixelShader = DefPS;
+		DefPS->AddRef();
+	}
 
-    if (simd_equal(ParticleShader1, hash) &&SUCCEEDED(hr) && ppPixelShader && *ppPixelShader) {
-        std::ofstream file("ParticleShader1_dump.cso", std::ios::binary);
-        file.write(reinterpret_cast<const char*>(pShaderBytecode), BytecodeLength);
-        file.close();
-    }
-
-    return hr;
-}
-ID3D11PixelShader* DefPS = nullptr;
-ID3D11VertexShader* DefVS = nullptr;
-void CreateShaderOnStart(ID3D11Device* pDevice) {
-    pDevice->CreatePixelShader(data.data(), data.size(), nullptr, &DefPS);
+    return procs->CreatePixelShader(pDevice, pShaderBytecode, BytecodeLength, pClassLinkage, ppPixelShader);
 }
 HRESULT STDMETHODCALLTYPE ID3D11Device_CreateBuffer(
     ID3D11Device* pDevice,
@@ -146,7 +143,7 @@ HRESULT STDMETHODCALLTYPE ID3D11Device_CreateBuffer(
         pDesc->BindFlags == D3D11_BIND_INDEX_BUFFER &&
         pDesc->CPUAccessFlags == D3D11_CPU_ACCESS_WRITE)
     {
-        log(crc32(pDesc, sizeof(*pDesc)));
+        // log(crc32(pDesc, sizeof(*pDesc)));
         return procs->CreateBuffer(pDevice, pDesc, pData, ppBuffer);
     }
 
@@ -156,19 +153,21 @@ HRESULT STDMETHODCALLTYPE ID3D11Device_CreateBuffer(
 ID3D11Buffer* g_pIndexBuffer = nullptr;
 std::uint32_t hash = 1248313143u;
 bool found = false;
+mutex drawmutex;
 void STDMETHODCALLTYPE ID3D11DeviceContext_IASetIndexBuffer(
         ID3D11DeviceContext* pContext,
         ID3D11Buffer* pIndexBuffer,
         DXGI_FORMAT Format,
         UINT Offset) {
     const auto* procs = getContextProcs(pContext);
+    std::lock_guard lock(drawmutex);
+
     if (pIndexBuffer != nullptr) {
         D3D11_BUFFER_DESC desc = {};
         pIndexBuffer->GetDesc(&desc);
         uint32_t currentHash = crc32(&desc, sizeof(desc));
         if (currentHash == hash) {
-            // pContext->PSSetShader(DefPS, nullptr, 0);
-            found = true;
+            pContext->PSSetShader(DefPS, nullptr, 0);
         }
     }
     procs->IASetIndexBuffer(pContext, pIndexBuffer, Format, Offset);
@@ -197,18 +196,14 @@ void STDMETHODCALLTYPE ID3D11DeviceContext_DrawIndexed(
         UINT IndexCount,
         UINT StartIndexLocation,
         INT BaseVertexLocation) {
-    auto procs = getContextProcs(pContext);
-    if (IndexCount == 228 && found) {
-        // ID3D11PixelShader* prevPS = nullptr;
-        // pContext->PSGetShader(&prevPS, nullptr, nullptr);
-        // pContext->PSSetShader(nullptr, nullptr, 0);
-        // procs->DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
-        // pContext->PSSetShader(prevPS, nullptr, 0);
-        // prevPS->Release();
-        found = false;
+    const auto* procs = getContextProcs(pContext);
+    if (IndexCount == 9000) {
+
+        pContext->PSSetShader(DefPS, nullptr, 0);
+        procs->DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
+
         return;
     }
-    found = false;
     procs->DrawIndexed(pContext, IndexCount, StartIndexLocation, BaseVertexLocation);
 }
 
@@ -257,9 +252,9 @@ void hookDevice(ID3D11Device* pDevice) {
 #endif
 
     DeviceProcs* procs = &g_deviceProcs;
-    //  HOOK_PROC(ID3D11Device, pDevice, procs, 3,  CreateBuffer);
+    // HOOK_PROC(ID3D11Device, pDevice, procs, 3,  CreateBuffer);
     // HOOK_PROC(ID3D11Device, pDevice, procs, 12,  CreateVertexShader);
-    // HOOK_PROC(ID3D11Device, pDevice, procs, 15,  CreatePixelShader);
+    HOOK_PROC(ID3D11Device, pDevice, procs, 15,  CreatePixelShader);
 
     g_installedHooks |= HOOK_DEVICE;
 }
@@ -280,7 +275,7 @@ void hookContext(ID3D11DeviceContext* pContext) {
 //   HOOK_PROC(ID3D11DeviceContext, pContext, procs, 9, PSSetShader);
    HOOK_PROC(ID3D11DeviceContext, pContext, procs, 12, DrawIndexed);
 //   HOOK_PROC(ID3D11DeviceContext, pContext, procs, 13, Draw);
-  HOOK_PROC(ID3D11DeviceContext, pContext, procs, 19, IASetIndexBuffer);
+//   HOOK_PROC(ID3D11DeviceContext, pContext, procs, 19, IASetIndexBuffer);
   //   HOOK_PROC(ID3D11DeviceContext, pContext, procs, 14, Map);
     // HOOK_PROC(ID3D11DeviceContext, pContext, procs, 48,  UpdateSubresource);
 
